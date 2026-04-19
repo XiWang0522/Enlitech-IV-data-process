@@ -432,6 +432,87 @@ def ask_axis_limits_cli(args) -> Tuple[float | None, float | None, float | None,
     return vmin, vmax, jmin, jmax
 
 
+def ask_axis_limits_gui(
+    vmin_default: float | None = None,
+    vmax_default: float | None = None,
+    jmin_default: float | None = None,
+    jmax_default: float | None = None,
+) -> Tuple[float | None, float | None, float | None, float | None]:
+    """
+    Popup dialog for axis limits.
+    Empty input means auto range (None).
+    """
+    if tk is None or messagebox is None:
+        return vmin_default, vmax_default, jmin_default, jmax_default
+
+    result = {
+        "vmin": vmin_default,
+        "vmax": vmax_default,
+        "jmin": jmin_default,
+        "jmax": jmax_default,
+    }
+
+    root = tk.Tk()
+    root.title("IV 图坐标范围设置")
+    root.resizable(False, False)
+
+    tk.Label(root, text="可留空表示自动范围", anchor="w").grid(row=0, column=0, columnspan=2, padx=10, pady=(10, 6), sticky="w")
+
+    vmin_var = tk.StringVar(value="" if vmin_default is None else str(vmin_default))
+    vmax_var = tk.StringVar(value="" if vmax_default is None else str(vmax_default))
+    jmin_var = tk.StringVar(value="" if jmin_default is None else str(jmin_default))
+    jmax_var = tk.StringVar(value="" if jmax_default is None else str(jmax_default))
+
+    tk.Label(root, text="V 最小值 (vmin)").grid(row=1, column=0, padx=10, pady=4, sticky="w")
+    tk.Entry(root, textvariable=vmin_var, width=20).grid(row=1, column=1, padx=10, pady=4)
+    tk.Label(root, text="V 最大值 (vmax)").grid(row=2, column=0, padx=10, pady=4, sticky="w")
+    tk.Entry(root, textvariable=vmax_var, width=20).grid(row=2, column=1, padx=10, pady=4)
+    tk.Label(root, text="J 最小值 (jmin)").grid(row=3, column=0, padx=10, pady=4, sticky="w")
+    tk.Entry(root, textvariable=jmin_var, width=20).grid(row=3, column=1, padx=10, pady=4)
+    tk.Label(root, text="J 最大值 (jmax)").grid(row=4, column=0, padx=10, pady=4, sticky="w")
+    tk.Entry(root, textvariable=jmax_var, width=20).grid(row=4, column=1, padx=10, pady=4)
+
+    def _to_float_or_none(raw: str):
+        s = raw.strip()
+        if s == "":
+            return None
+        return float(s)
+
+    def on_ok():
+        try:
+            result["vmin"] = _to_float_or_none(vmin_var.get())
+            result["vmax"] = _to_float_or_none(vmax_var.get())
+            result["jmin"] = _to_float_or_none(jmin_var.get())
+            result["jmax"] = _to_float_or_none(jmax_var.get())
+        except ValueError:
+            messagebox.showerror("输入错误", "请输入数字，或留空表示自动范围。")
+            return
+        root.destroy()
+
+    def on_auto():
+        result["vmin"] = None
+        result["vmax"] = None
+        result["jmin"] = None
+        result["jmax"] = None
+        root.destroy()
+
+    def on_cancel():
+        # Keep defaults
+        root.destroy()
+
+    btn_frame = tk.Frame(root)
+    btn_frame.grid(row=5, column=0, columnspan=2, padx=10, pady=(10, 10), sticky="e")
+    tk.Button(btn_frame, text="自动范围", command=on_auto).pack(side="left", padx=6)
+    tk.Button(btn_frame, text="取消", command=on_cancel).pack(side="left", padx=6)
+    tk.Button(btn_frame, text="确认", command=on_ok).pack(side="left", padx=6)
+
+    root.protocol("WM_DELETE_WINDOW", on_cancel)
+    root.grab_set()
+    root.wait_window()
+
+    return result["vmin"], result["vmax"], result["jmin"], result["jmax"]
+
+
 def ask_continue_dialog() -> bool:
     """Ask whether to continue selecting another CSV file."""
     if tk is not None and messagebox is not None:
@@ -445,7 +526,11 @@ def ask_continue_dialog() -> bool:
     return s in {"y", "yes"}
 
 
-def process_one_csv(csv_path: Path, args) -> None:
+def process_one_csv(
+    csv_path: Path,
+    args,
+    limits_override: Tuple[float | None, float | None, float | None, float | None] | None = None,
+) -> None:
     if not csv_path.exists():
         raise FileNotFoundError(f"CSV not found: {csv_path}")
 
@@ -525,7 +610,10 @@ def process_one_csv(csv_path: Path, args) -> None:
             print(f"  {r['Condition']}: PCE={r[pce_col]:.6g}, Name={r['Name']}")
 
     # 7) Best-PCE IV comparison plot
-    vmin, vmax, jmin, jmax = ask_axis_limits_cli(args)
+    if limits_override is None:
+        vmin, vmax, jmin, jmax = ask_axis_limits_cli(args)
+    else:
+        vmin, vmax, jmin, jmax = limits_override
     plt.figure(figsize=(10, 7))
     plotted = 0
     for _, row in best_pce.iterrows():
@@ -589,7 +677,9 @@ def main():
             print("未选择文件，程序结束。")
             return
 
-        process_one_csv(csv_path, args)
+        # In interactive picker mode, pop up range dialog right after CSV selection.
+        limits = ask_axis_limits_gui(args.vmin, args.vmax, args.jmin, args.jmax)
+        process_one_csv(csv_path, args, limits_override=limits)
 
         if args.single:
             return
